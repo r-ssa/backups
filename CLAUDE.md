@@ -11,5 +11,5 @@ Archive stale files out of Downloads; back up the whole PC to Proxmox storage.
 Check it against the Job and Non-goals above. If it doesn't cleanly fit, stop and ask — don't force it in. Full repo map and dependency direction: https://github.com/r-ssa/rafael-systems
 
 ## This repo can destroy data if wrong. Extra rules:
-- `main` is branch-protected, same as `proxmox-ops` — work happens on a branch + PR the user actually reads, never a direct push.
+- `main` should be branch-protected, but GitHub Pro is required for that on a private repo — not yet active. Until it is, treat this as an honor rule: work on a branch + PR for the user to read, never push directly to `main`, even though nothing currently blocks it.
 - Any archival/deletion logic defaults to dry-run and requires an explicit confirm step before it deletes or moves anything for real. No exceptions, even for "obviously safe" cases.
