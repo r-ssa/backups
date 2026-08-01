@@ -33,9 +33,11 @@ destination_space() {
   # Uses the sftp CLI's built-in `df` (OpenSSH's statvfs@openssh.com
   # extension) over the same restricted account restic already uses
   # — no new credential, no shell needed on the remote end. Prints
-  # "total_kb avail_kb" on success, nothing on any failure (best
-  # effort: a query failure here must never fail the whole run).
-  printf 'df data\n' | sftp -q -b - backup-target 2>/dev/null \
+  # "total_kb avail_kb" for the given remote path on success, nothing
+  # on any failure (best effort: a query failure here must never fail
+  # the whole run).
+  local path="$1"
+  printf 'df %s\n' "${path}" | sftp -q -b - backup-target 2>/dev/null \
     | awk 'NR==3 {print $1, $3}'
 }
 
@@ -52,22 +54,41 @@ write_status() {
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("total_size","null"))' 2>/dev/null || echo null)"
   fi
 
-  local dest_total_kb="" dest_avail_kb=""
-  read -r dest_total_kb dest_avail_kb < <(destination_space || true)
+  local data_total_kb="" data_avail_kb=""
+  read -r data_total_kb data_avail_kb < <(destination_space data || true)
 
-  python3 - "${status}" "${START_EPOCH}" "${end_epoch}" "${size_bytes}" "${STATUS_FILE}" "${dest_total_kb}" "${dest_avail_kb}" <<'PYEOF'
+  local single_total_kb="" single_avail_kb=""
+  read -r single_total_kb single_avail_kb < <(destination_space single-file || true)
+
+  python3 - "${status}" "${START_EPOCH}" "${end_epoch}" "${size_bytes}" "${STATUS_FILE}" \
+    "${data_total_kb}" "${data_avail_kb}" "${single_total_kb}" "${single_avail_kb}" <<'PYEOF'
 import json
 import sys
 
-status, start_epoch, end_epoch, size_bytes, status_file, dest_total_kb, dest_avail_kb = sys.argv[1:8]
+(status, start_epoch, end_epoch, size_bytes, status_file,
+ data_total_kb, data_avail_kb, single_total_kb, single_avail_kb) = sys.argv[1:10]
+
+
+def bytes_or_none(kb):
+    return int(kb) * 1024 if kb.isdigit() else None
+
+
 data = {
     "last_run_start": int(start_epoch),
     "last_run_end": int(end_epoch),
     "duration_s": int(end_epoch) - int(start_epoch),
     "status": status,
     "size_bytes": None if size_bytes in ("null", "") else int(size_bytes),
-    "dest_total_bytes": int(dest_total_kb) * 1024 if dest_total_kb.isdigit() else None,
-    "dest_avail_bytes": int(dest_avail_kb) * 1024 if dest_avail_kb.isdigit() else None,
+    "destinations": {
+        "data": {
+            "total_bytes": bytes_or_none(data_total_kb),
+            "avail_bytes": bytes_or_none(data_avail_kb),
+        },
+        "single-file": {
+            "total_bytes": bytes_or_none(single_total_kb),
+            "avail_bytes": bytes_or_none(single_avail_kb),
+        },
+    },
 }
 with open(status_file, "w") as f:
     json.dump(data, f, indent=2)
