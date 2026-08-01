@@ -29,6 +29,16 @@ die() { echo "backup_desktop: $*" >&2; exit 1; }
 mkdir -p "${STATE_DIR}"
 START_EPOCH="$(date +%s)"
 
+destination_space() {
+  # Uses the sftp CLI's built-in `df` (OpenSSH's statvfs@openssh.com
+  # extension) over the same restricted account restic already uses
+  # — no new credential, no shell needed on the remote end. Prints
+  # "total_kb avail_kb" on success, nothing on any failure (best
+  # effort: a query failure here must never fail the whole run).
+  printf 'df data\n' | sftp -q -b - backup-target 2>/dev/null \
+    | awk 'NR==3 {print $1, $3}'
+}
+
 write_status() {
   local exit_code="$1"
   local end_epoch
@@ -42,17 +52,22 @@ write_status() {
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("total_size","null"))' 2>/dev/null || echo null)"
   fi
 
-  python3 - "${status}" "${START_EPOCH}" "${end_epoch}" "${size_bytes}" "${STATUS_FILE}" <<'PYEOF'
+  local dest_total_kb="" dest_avail_kb=""
+  read -r dest_total_kb dest_avail_kb < <(destination_space || true)
+
+  python3 - "${status}" "${START_EPOCH}" "${end_epoch}" "${size_bytes}" "${STATUS_FILE}" "${dest_total_kb}" "${dest_avail_kb}" <<'PYEOF'
 import json
 import sys
 
-status, start_epoch, end_epoch, size_bytes, status_file = sys.argv[1:6]
+status, start_epoch, end_epoch, size_bytes, status_file, dest_total_kb, dest_avail_kb = sys.argv[1:8]
 data = {
     "last_run_start": int(start_epoch),
     "last_run_end": int(end_epoch),
     "duration_s": int(end_epoch) - int(start_epoch),
     "status": status,
     "size_bytes": None if size_bytes in ("null", "") else int(size_bytes),
+    "dest_total_bytes": int(dest_total_kb) * 1024 if dest_total_kb.isdigit() else None,
+    "dest_avail_bytes": int(dest_avail_kb) * 1024 if dest_avail_kb.isdigit() else None,
 }
 with open(status_file, "w") as f:
     json.dump(data, f, indent=2)
