@@ -1,0 +1,6 @@
+[Unit]
+Description=Archive stale files out of Downloads
+
+[Service]
+Type=oneshot
+ExecStart=%h/backups/archive_downloads.sh --yes
