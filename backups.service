@@ -1,0 +1,8 @@
+[Unit]
+Description=Whole-PC backup via restic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/backups/backup_desktop.sh
