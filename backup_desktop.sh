@@ -16,8 +16,50 @@ CONFIG_DIR="${HOME}/.config/backups"
 PASSWORD_FILE="${CONFIG_DIR}/restic-password"
 EXCLUDE_FILE="${CONFIG_DIR}/excludes.txt"
 REPO="sftp:backup-target:data"
+STATE_DIR="${HOME}/.local/state/backups"
+STATUS_FILE="${STATE_DIR}/status.json"
 
 die() { echo "backup_desktop: $*" >&2; exit 1; }
+
+# Status file for the proxmox-monitor dashboard to read — this script
+# never reads it back or acts on it, it only ever writes its own
+# outcome. Written via a trap so a run that fails partway (missing
+# restic, network down, restic itself erroring) still records
+# "failure" instead of leaving stale/missing status behind.
+mkdir -p "${STATE_DIR}"
+START_EPOCH="$(date +%s)"
+
+write_status() {
+  local exit_code="$1"
+  local end_epoch
+  end_epoch="$(date +%s)"
+  local status="success"
+  [[ "${exit_code}" -eq 0 ]] || status="failure"
+
+  local size_bytes="null"
+  if [[ "${status}" == "success" ]]; then
+    size_bytes="$(restic stats latest --json 2>/dev/null \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("total_size","null"))' 2>/dev/null || echo null)"
+  fi
+
+  python3 - "${status}" "${START_EPOCH}" "${end_epoch}" "${size_bytes}" "${STATUS_FILE}" <<'PYEOF'
+import json
+import sys
+
+status, start_epoch, end_epoch, size_bytes, status_file = sys.argv[1:6]
+data = {
+    "last_run_start": int(start_epoch),
+    "last_run_end": int(end_epoch),
+    "duration_s": int(end_epoch) - int(start_epoch),
+    "status": status,
+    "size_bytes": None if size_bytes in ("null", "") else int(size_bytes),
+}
+with open(status_file, "w") as f:
+    json.dump(data, f, indent=2)
+PYEOF
+}
+
+trap 'write_status "$?"' EXIT
 
 command -v restic >/dev/null || die "restic not installed"
 
